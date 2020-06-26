@@ -238,20 +238,14 @@ int main(int argc, const char * argv[]) {
         if (IS_OK(op_result)) {
             drv->ascendScanData(nodes, count);
             for (int pos = 0; pos < (int)count ; ++pos) {
-
               // declare a buffer for writing the OSC packet into
               char oscbuffer[1024];
-              // int len = tosc_writeMessage(
-              //     buffer, sizeof(buffer),
-              //     "/ping", // the address
-              //     "fsi",   // the format; 'f':32-bit float, 's':ascii string, 'i':32-bit integer
-              //     1.0f, "hello", 2);
-              //  send(socket_fd, buffer, len, 0);
-
-
-
-
-
+               int len = tosc_writeMessage(
+                   buffer, sizeof(buffer),
+                   "/ping", // the address
+                   "fsi",   // the format; 'f':32-bit float, 's':ascii string, 'i':32-bit integer
+                   1.0f, "hello", 2);
+                send(socket_fd, buffer, len, 0);
 
                 printf("%s theta: %03.2f Dist: %08.2f Q: %d \n",
                     (nodes[pos].flag & RPLIDAR_RESP_MEASUREMENT_SYNCBIT) ?"S ":"  ",
