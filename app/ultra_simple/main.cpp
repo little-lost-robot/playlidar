@@ -26,6 +26,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include "tinyosc.h"
 
 #include "rplidar.h" //RPLIDAR standard sdk, all-in-one header
 
@@ -49,6 +52,8 @@ static inline void delay(_word_size_t ms){
 #endif
 
 using namespace rp::standalone::rplidar;
+
+#define PORT 8888
 
 bool checkRPLIDARHealth(RPlidarDriver * drv)
 {
@@ -82,6 +87,31 @@ void ctrlc(int)
 }
 
 int main(int argc, const char * argv[]) {
+  char buffer[1024] = {0};
+  struct sockaddr_in serv_addr;
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_port = htons(PORT);
+  int socket_fd=0, valread;
+  char *hello = "Hello from client";
+
+  if ((socket_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
+    printf("\n Socket creation error \n");
+    return -1;
+  }else{
+    printf("\n Socket created \n");
+  }
+  if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)<=0){
+    printf("\nInvalid address/ Address not supported \n");
+    return -1;
+  }
+  if (connect(socket_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0){
+    printf("\nConnection Failed boo\n");
+    return -1;
+  }
+  else{
+    printf("\nConnected: %d \n", PORT);
+  }
+
     const char * opt_com_path = NULL;
     _u32         baudrateArray[2] = {115200, 256000};
     _u32         opt_com_baudrate = 0;
@@ -93,7 +123,7 @@ int main(int argc, const char * argv[]) {
            "Version: " RPLIDAR_SDK_VERSION "\n");
 
     // read serial port from the command line...
-    if (argc>1) opt_com_path = argv[1]; // or set to a fixed value: e.g. "com3" 
+    if (argc>1) opt_com_path = argv[1]; // or set to a fixed value: e.g. "com3"
 
     // read baud rate from the command line if specified...
     if (argc>2)
@@ -119,7 +149,7 @@ int main(int argc, const char * argv[]) {
         fprintf(stderr, "insufficent memory, exit\n");
         exit(-2);
     }
-    
+
     rplidar_response_device_info_t devinfo;
     bool connectSuccess = false;
     // make connection...
@@ -131,7 +161,7 @@ int main(int argc, const char * argv[]) {
         {
             op_result = drv->getDeviceInfo(devinfo);
 
-            if (IS_OK(op_result)) 
+            if (IS_OK(op_result))
             {
                 connectSuccess = true;
             }
@@ -153,7 +183,7 @@ int main(int argc, const char * argv[]) {
             {
                 op_result = drv->getDeviceInfo(devinfo);
 
-                if (IS_OK(op_result)) 
+                if (IS_OK(op_result))
                 {
                     connectSuccess = true;
                     break;
@@ -167,7 +197,7 @@ int main(int argc, const char * argv[]) {
         }
     }
     if (!connectSuccess) {
-        
+
         fprintf(stderr, "Error, cannot bind to the specified serial port %s.\n"
             , opt_com_path);
         goto on_finished;
@@ -194,7 +224,7 @@ int main(int argc, const char * argv[]) {
     }
 
     signal(SIGINT, ctrlc);
-    
+
     drv->startMotor();
     // start scan...
     drv->startScan(0,1);
@@ -208,15 +238,30 @@ int main(int argc, const char * argv[]) {
         if (IS_OK(op_result)) {
             drv->ascendScanData(nodes, count);
             for (int pos = 0; pos < (int)count ; ++pos) {
-                printf("%s theta: %03.2f Dist: %08.2f Q: %d \n", 
-                    (nodes[pos].flag & RPLIDAR_RESP_MEASUREMENT_SYNCBIT) ?"S ":"  ", 
-                    (nodes[pos].angle_z_q14 * 90.f / (1 << 14)), 
+
+              // declare a buffer for writing the OSC packet into
+              char oscbuffer[1024];
+              // int len = tosc_writeMessage(
+              //     buffer, sizeof(buffer),
+              //     "/ping", // the address
+              //     "fsi",   // the format; 'f':32-bit float, 's':ascii string, 'i':32-bit integer
+              //     1.0f, "hello", 2);
+              //  send(socket_fd, buffer, len, 0);
+
+
+
+
+
+
+                printf("%s theta: %03.2f Dist: %08.2f Q: %d \n",
+                    (nodes[pos].flag & RPLIDAR_RESP_MEASUREMENT_SYNCBIT) ?"S ":"  ",
+                    (nodes[pos].angle_z_q14 * 90.f / (1 << 14)),
                     nodes[pos].dist_mm_q2/4.0f,
                     nodes[pos].quality);
             }
         }
 
-        if (ctrl_c_pressed){ 
+        if (ctrl_c_pressed){
             break;
         }
     }
@@ -229,4 +274,3 @@ on_finished:
     drv = NULL;
     return 0;
 }
-
