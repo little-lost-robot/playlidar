@@ -29,6 +29,10 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <time.h>
+#include <cmath>
+#include <chrono>
+#include <sstream>
 
 #include "tinyosc.h"
 #include "rplidar.h"
@@ -55,8 +59,58 @@ static inline void delay(_word_size_t ms){
 #endif
 
 using namespace rp::standalone::rplidar;
+using namespace std::chrono;
 
 #define PORT 8888
+//RPlidarDriver * drv = NULL;
+
+
+void publish_scan(){
+  //publish scan please
+}
+
+
+bool stop_motor(RPlidarDriver * drv){
+  if(!drv)
+       return false;
+  drv->stop();
+  drv->stopMotor();
+  return true;
+}
+
+bool start_motor(RPlidarDriver * drv){
+  if(!drv)
+       return false;
+  drv->startMotor();
+  drv->startScan(0,1);
+  return true;
+}
+
+bool getRPLIDARDeviceInfo(RPlidarDriver * drv)
+{
+    u_result     op_result;
+    rplidar_response_device_info_t devinfo;
+
+    op_result = drv->getDeviceInfo(devinfo);
+    if (IS_FAIL(op_result)) {
+        if (op_result == RESULT_OPERATION_TIMEOUT) {
+            printf("Error, operation time out. RESULT_OPERATION_TIMEOUT! ");
+        } else {
+            printf("Error, unexpected error, code: %x",op_result);
+        }
+        return false;
+    }
+
+    // print out the device serial number, firmware and hardware version number..
+    printf("RPLIDAR S/N: ");
+    for (int pos = 0; pos < 16 ;++pos) {
+        printf("%02X", devinfo.serialnum[pos]);
+    }
+    printf("\n");
+    printf("Firmware Ver: %d.%02d",devinfo.firmware_version>>8, devinfo.firmware_version & 0xFF);
+    printf("Hardware Rev: %d",(int)devinfo.hardware_version);
+    return true;
+}
 
 bool checkRPLIDARHealth(RPlidarDriver * drv)
 {
@@ -103,14 +157,25 @@ static float getAngle(const rplidar_response_measurement_node_hq_t& node)
     return node.angle_z_q14 * 90.f / 16384.f;
 }
 
+milliseconds timeNow(){
+  milliseconds ms = duration_cast< milliseconds >(system_clock::now().time_since_epoch());
+  return ms;
+}
 
 int main(int argc, const char * argv[]) {
+  std::string serial_port;
+ int serial_baudrate = 115200;
+ bool inverted = false;
+  bool angle_compensate = true;
+  float max_distance = 8.0;
+  int angle_compensate_multiple = 1;//it stand of angle compensate at per 1 degree
+  std::string scan_mode;
+
   char buffer[1024] = {0};
   struct sockaddr_in serv_addr;
   serv_addr.sin_family = AF_INET;
   serv_addr.sin_port = htons(PORT);
   int socket_fd=0, valread;
-  char *hello = "Hello from client";
 
   if ((socket_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
     printf("\n Socket creation error \n");
@@ -131,146 +196,144 @@ int main(int argc, const char * argv[]) {
   }
 
   const char * opt_com_path = NULL;
-  _u32         baudrateArray[2] = {115200, 256000};
-  _u32         opt_com_baudrate = 0;
   u_result     op_result;
 
-  bool useArgcBaudrate = false;
-
-  printf("Ultra simple LIDAR data grabber for RPLIDAR.\n"
-         "Version: " RPLIDAR_SDK_VERSION "\n");
-
-  // read serial port from the command line...
-  if (argc>1) opt_com_path = argv[1]; // or set to a fixed value: e.g. "com3"
-
-  // read baud rate from the command line if specified...
-  if (argc>2)
-  {
-    opt_com_baudrate = strtoul(argv[2], NULL, 10);
-    useArgcBaudrate = true;
-  }
-
-  if (!opt_com_path) {
 #ifdef _WIN32
-    // use default com port
-    opt_com_path = "\\\\.\\com57";
+    serial_port = "\\\\.\\com57";
 #elif __APPLE__
-    opt_com_path = "/dev/tty.SLAB_USBtoUART";
+    serial_port = "/dev/tty.SLAB_USBtoUART";
 #else
-    opt_com_path = "/dev/ttyUSB0";
+    serial_port = "/dev/ttyUSB0";
 #endif
-  }
 
   // create the driver instance
-  RPlidarDriver * drv = RPlidarDriver::CreateDriver(DRIVER_TYPE_SERIALPORT);
-  if (!drv) {
-    fprintf(stderr, "insufficent memory, exit\n");
-    exit(-2);
-  }
+  RPlidarDriver *drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_SERIALPORT);
 
-  rplidar_response_device_info_t devinfo;
-  bool connectSuccess = false;
-  // make connection...
-  if(useArgcBaudrate)
-  {
-    if(!drv)
-      drv = RPlidarDriver::CreateDriver(DRIVER_TYPE_SERIALPORT);
-    if (IS_OK(drv->connect(opt_com_path, opt_com_baudrate)))
-    {
-      op_result = drv->getDeviceInfo(devinfo);
+  if(!drv) {
+      printf("Create Driver fail, exit");
+      exit(-2);
+   }
 
-      if (IS_OK(op_result))
-      {
-        connectSuccess = true;
-      }
-      else
-      {
-        delete drv;
-        drv = NULL;
-      }
-    }
-  }
-  else
-  {
-    size_t baudRateArraySize = (sizeof(baudrateArray))/ (sizeof(baudrateArray[0]));
-    for(size_t i = 0; i < baudRateArraySize; ++i)
-    {
-      if(!drv)
-        drv = RPlidarDriver::CreateDriver(DRIVER_TYPE_SERIALPORT);
-      if(IS_OK(drv->connect(opt_com_path, baudrateArray[i])))
-      {
-        op_result = drv->getDeviceInfo(devinfo);
+   if (IS_FAIL(drv->connect(serial_port.c_str(), (_u32)serial_baudrate))) {
+       printf("Error, cannot bind to the specified serial port %s.",serial_port.c_str());
+       RPlidarDriver::DisposeDriver(drv);
+       return -1;
+   }
 
-        if (IS_OK(op_result))
-        {
-          connectSuccess = true;
-          break;
-        }
-        else
-        {
-          delete drv;
-          drv = NULL;
-        }
-      }
-    }
-  }
-  if (!connectSuccess) {
-
-    fprintf(stderr, "Error, cannot bind to the specified serial port %s.\n"
-            , opt_com_path);
-    goto on_finished;
-  }
-
-  // print out the device serial number, firmware and hardware version number..
-  printf("RPLIDAR S/N: ");
-  for (int pos = 0; pos < 16 ;++pos) {
-    printf("%02X", devinfo.serialnum[pos]);
-  }
-
-  printf("\n"
-         "Firmware Ver: %d.%02d\n"
-         "Hardware Rev: %d\n"
-         , devinfo.firmware_version>>8
-         , devinfo.firmware_version & 0xFF
-         , (int)devinfo.hardware_version);
-
-
+   // get rplidar device info
+   if(!getRPLIDARDeviceInfo(drv)) {
+       return -1;
+   }
 
   // check health...
-  if (!checkRPLIDARHealth(drv)) {
+  if(!checkRPLIDARHealth(drv)) {
     goto on_finished;
   }
 
   signal(SIGINT, ctrlc);
 
-  drv->startMotor();
-  // start scan...
-  drv->startScan(0,1);
+  start_motor(drv);
 
-  // fetech result and print it out...
+  RplidarScanMode current_scan_mode;
+  //TODO: do we need other scan modes?
+  op_result = drv->startScan(false /* not force scan */, true /* use typical scan mode */, 0, &current_scan_mode);
+
+  if(IS_OK(op_result)){
+    //default frequent is 10 hz (by motor pwm value),  current_scan_mode.us_per_sample is the number of scan point per us
+    angle_compensate_multiple = (int)(1000*1000/current_scan_mode.us_per_sample/10.0/360.0);
+    if(angle_compensate_multiple < 1){
+      angle_compensate_multiple = 1;
+    }
+    max_distance = current_scan_mode.max_distance;
+    printf("current scan mode: %s, max_distance: %.1f m, Point number: %.1fK , angle_compensate: %d",  current_scan_mode.scan_mode,
+            current_scan_mode.max_distance, (1000/current_scan_mode.us_per_sample), angle_compensate_multiple);
+
+  }else{
+    printf("Can not start scan: %08x!", op_result);
+    return -1;
+  }
+
+  milliseconds start_scan_time;
+  milliseconds end_scan_time;
+  milliseconds scan_duration;
+
+  // fetch result and print it out...
   while (1) {
-    rplidar_response_measurement_node_hq_t nodes[8192];
+    rplidar_response_measurement_node_hq_t nodes[360*8];
     size_t   count = _countof(nodes);
 
+    start_scan_time = timeNow();
     op_result = drv->grabScanDataHq(nodes, count);
+    end_scan_time = timeNow();
+    scan_duration = (end_scan_time - start_scan_time);
+
     if (IS_OK(op_result)) {
       drv->ascendScanData(nodes, count);
-      for (int pos = 0; pos < (int)count ; ++pos) {
-        // declare a buffer for writing the OSC packet into
-        char oscbuffer[1024];
-        int len = tosc_writeMessage(
-                                    buffer, sizeof(buffer),
-                                    "/ping", // the address
-                                    "fsi",   // the format; 'f':32-bit float, 's':ascii string, 'i':32-bit integer
-                                    1.0f, "hello", 2);
-        send(socket_fd, buffer, len, 0);
+      float angle_min = DEG2RAD(0.0f);
+      float angle_max = DEG2RAD(359.0f);
+      if (angle_compensate) {
+        //const int angle_compensate_multiple = 1;
+       const int angle_compensate_nodes_count = 360*angle_compensate_multiple;
+       int angle_compensate_offset = 0;
+       rplidar_response_measurement_node_hq_t angle_compensate_nodes[angle_compensate_nodes_count];
+       memset(angle_compensate_nodes, 0, angle_compensate_nodes_count*sizeof(rplidar_response_measurement_node_hq_t));
 
-        printf("%s theta: %03.2f Dist: %08.2f Q: %d \n",
-               (nodes[pos].flag & RPLIDAR_RESP_MEASUREMENT_SYNCBIT) ?"S ":"  ",
-               (nodes[pos].angle_z_q14 * 90.f / (1 << 14)),
-               nodes[pos].dist_mm_q2/4.0f,
-               nodes[pos].quality);
+      for(int i=0 ; i < count; i++ ) {
+        if (nodes[i].dist_mm_q2 != 0) {
+          float angle = getAngle(nodes[i]);
+          int angle_value = (int)(angle * angle_compensate_multiple);
+          if ((angle_value - angle_compensate_offset) < 0){
+            angle_compensate_offset = angle_value;
+          }
+          for (int j = 0; j < angle_compensate_multiple; j++) {
+            angle_compensate_nodes[angle_value-angle_compensate_offset+j] = nodes[i];
+          }
+          }
       }
+      publish_scan(&scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
+                              start_scan_time, scan_duration, inverted,
+                              angle_min, angle_max, max_distance,
+                              frame_id);
+
+
+    }else{
+        int start_node = 0, end_node = 0;
+        int i = 0;
+        // find the first valid node and last valid node
+        while (nodes[i++].dist_mm_q2 == 0);
+        start_node = i-1;
+        i = count -1;
+        while (nodes[i--].dist_mm_q2 == 0);
+        end_node = i+1;
+
+        angle_min = DEG2RAD(getAngle(nodes[start_node]));
+        angle_max = DEG2RAD(getAngle(nodes[end_node]));
+
+        publish_scan(&scan_pub, &nodes[start_node], end_node-start_node +1,
+                 start_scan_time, scan_duration, inverted,
+                 angle_min, angle_max, max_distance,
+                 frame_id);
+    }
+
+
+      //
+      // for (int pos = 0; pos < (int)count ; ++pos) {
+      //   // declare a buffer for writing the OSC packet into
+      //   char oscbuffer[1024];
+      //   int len = tosc_writeMessage(
+      //                               buffer, sizeof(buffer),
+      //                               "/ping", // the address
+      //                               "fsi",   // the format; 'f':32-bit float, 's':ascii string, 'i':32-bit integer
+      //                               1.0f, "hello", 2);
+      //   send(socket_fd, buffer, len, 0);
+      //
+      //   printf("%s theta: %03.2f Dist: %08.2f Q: %d \n",
+      //          (nodes[pos].flag & RPLIDAR_RESP_MEASUREMENT_SYNCBIT) ?"S ":"  ",
+      //          (nodes[pos].angle_z_q14 * 90.f / (1 << 14)),
+      //          nodes[pos].dist_mm_q2/4.0f,
+      //          nodes[pos].quality);
+      // }
+    //}
     }
 
     if (ctrl_c_pressed){
@@ -278,8 +341,7 @@ int main(int argc, const char * argv[]) {
     }
   }
 
-  drv->stop();
-  drv->stopMotor();
+  stop_motor(drv);
   // done!
 on_finished:
   RPlidarDriver::DisposeDriver(drv);
