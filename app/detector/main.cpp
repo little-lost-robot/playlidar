@@ -28,9 +28,10 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
-#include "tinyosc.h"
+#include <signal.h>
 
-#include "rplidar.h" //RPLIDAR standard sdk, all-in-one header
+#include "tinyosc.h"
+#include "rplidar.h"
 
 #ifndef _countof
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
@@ -92,11 +93,16 @@ bool checkRPLIDARHealth(RPlidarDriver * drv)
   return is_ok;
 }
 
-#include <signal.h>
 bool ctrl_c_pressed;
 void ctrlc(int){
   ctrl_c_pressed = true;
 }
+
+static float getAngle(const rplidar_response_measurement_node_hq_t& node)
+{
+    return node.angle_z_q14 * 90.f / 16384.f;
+}
+
 
 int main(int argc, const char * argv[]) {
   char buffer[1024] = {0};
