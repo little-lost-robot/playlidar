@@ -70,15 +70,12 @@ bool checkRPLIDARHealth(RPlidarDriver * drv)
       case RPLIDAR_STATUS_OK:
         printf("OK.");
         is_ok=true;
-        break;
       case RPLIDAR_STATUS_WARNING:
         printf("Warning.");
         is_ok=true;
-        break;
       case RPLIDAR_STATUS_ERROR:
         is_ok=false;
         printf("Error.");
-        break;
     }
     printf(" (errorcode: %d)\n", healthinfo.error_code);
   } else {
@@ -88,10 +85,9 @@ bool checkRPLIDARHealth(RPlidarDriver * drv)
 
   if (healthinfo.status == RPLIDAR_STATUS_ERROR) {
     fprintf(stderr, "Error, rplidar internal error detected. Please reboot the device to retry.\n");
-    is_ok=false
+    is_ok=false;
     // enable the following code if you want rplidar to be reboot by software
     // drv->reset();
-    break;
   }
   return is_ok;
 }
