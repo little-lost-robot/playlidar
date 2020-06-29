@@ -65,14 +65,19 @@ using namespace std::chrono;
 //RPlidarDriver * drv = NULL;
 
 
-void publish_scan(){
-  //publish scan please
+void publish_scan(rplidar_response_measurement_node_hq_t *nodes,
+                  size_t node_count, milliseconds start,
+                  milliseconds scan_time, bool inverted,
+                  float angle_min, float angle_max,
+                  float max_distance,
+                  int frame_id){
+
 }
 
 
 bool stop_motor(RPlidarDriver * drv){
   if(!drv)
-       return false;
+    return false;
   drv->stop();
   drv->stopMotor();
   return true;
@@ -80,7 +85,7 @@ bool stop_motor(RPlidarDriver * drv){
 
 bool start_motor(RPlidarDriver * drv){
   if(!drv)
-       return false;
+    return false;
   drv->startMotor();
   drv->startScan(0,1);
   return true;
@@ -88,28 +93,28 @@ bool start_motor(RPlidarDriver * drv){
 
 bool getRPLIDARDeviceInfo(RPlidarDriver * drv)
 {
-    u_result     op_result;
-    rplidar_response_device_info_t devinfo;
+  u_result     op_result;
+  rplidar_response_device_info_t devinfo;
 
-    op_result = drv->getDeviceInfo(devinfo);
-    if (IS_FAIL(op_result)) {
-        if (op_result == RESULT_OPERATION_TIMEOUT) {
-            printf("Error, operation time out. RESULT_OPERATION_TIMEOUT! ");
-        } else {
-            printf("Error, unexpected error, code: %x",op_result);
-        }
-        return false;
+  op_result = drv->getDeviceInfo(devinfo);
+  if (IS_FAIL(op_result)) {
+    if (op_result == RESULT_OPERATION_TIMEOUT) {
+      printf("Error, operation time out. RESULT_OPERATION_TIMEOUT! ");
+    } else {
+      printf("Error, unexpected error, code: %x",op_result);
     }
+    return false;
+  }
 
-    // print out the device serial number, firmware and hardware version number..
-    printf("RPLIDAR S/N: ");
-    for (int pos = 0; pos < 16 ;++pos) {
-        printf("%02X", devinfo.serialnum[pos]);
-    }
-    printf("\n");
-    printf("Firmware Ver: %d.%02d",devinfo.firmware_version>>8, devinfo.firmware_version & 0xFF);
-    printf("Hardware Rev: %d",(int)devinfo.hardware_version);
-    return true;
+  // print out the device serial number, firmware and hardware version number..
+  printf("RPLIDAR S/N: ");
+  for (int pos = 0; pos < 16 ;++pos) {
+    printf("%02X", devinfo.serialnum[pos]);
+  }
+  printf("\n");
+  printf("Firmware Ver: %d.%02d",devinfo.firmware_version>>8, devinfo.firmware_version & 0xFF);
+  printf("Hardware Rev: %d",(int)devinfo.hardware_version);
+  return true;
 }
 
 bool checkRPLIDARHealth(RPlidarDriver * drv)
@@ -154,7 +159,7 @@ void ctrlc(int){
 
 static float getAngle(const rplidar_response_measurement_node_hq_t& node)
 {
-    return node.angle_z_q14 * 90.f / 16384.f;
+  return node.angle_z_q14 * 90.f / 16384.f;
 }
 
 milliseconds timeNow(){
@@ -164,8 +169,8 @@ milliseconds timeNow(){
 
 int main(int argc, const char * argv[]) {
   std::string serial_port;
- int serial_baudrate = 115200;
- bool inverted = false;
+  int serial_baudrate = 115200;
+  bool inverted = false;
   bool angle_compensate = true;
   float max_distance = 8.0;
   int angle_compensate_multiple = 1;//it stand of angle compensate at per 1 degree
@@ -199,35 +204,35 @@ int main(int argc, const char * argv[]) {
   u_result     op_result;
 
 #ifdef _WIN32
-    serial_port = "\\\\.\\com57";
+  serial_port = "\\\\.\\com57";
 #elif __APPLE__
-    serial_port = "/dev/tty.SLAB_USBtoUART";
+  serial_port = "/dev/tty.SLAB_USBtoUART";
 #else
-    serial_port = "/dev/ttyUSB0";
+  serial_port = "/dev/ttyUSB0";
 #endif
 
   // create the driver instance
   RPlidarDriver *drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_SERIALPORT);
 
   if(!drv) {
-      printf("Create Driver fail, exit");
-      exit(-2);
-   }
+    printf("Create Driver fail, exit");
+    exit(-2);
+  }
 
-   if (IS_FAIL(drv->connect(serial_port.c_str(), (_u32)serial_baudrate))) {
-       printf("Error, cannot bind to the specified serial port %s.",serial_port.c_str());
-       RPlidarDriver::DisposeDriver(drv);
-       return -1;
-   }
+  if (IS_FAIL(drv->connect(serial_port.c_str(), (_u32)serial_baudrate))) {
+    printf("Error, cannot bind to the specified serial port %s.",serial_port.c_str());
+    RPlidarDriver::DisposeDriver(drv);
+    return -1;
+  }
 
-   // get rplidar device info
-   if(!getRPLIDARDeviceInfo(drv)) {
-       return -1;
-   }
+  // get rplidar device info
+  if(!getRPLIDARDeviceInfo(drv)) {
+    return -1;
+  }
 
   // check health...
   if(!checkRPLIDARHealth(drv)) {
-    goto on_finished;
+    return -1;
   }
 
   signal(SIGINT, ctrlc);
@@ -246,7 +251,7 @@ int main(int argc, const char * argv[]) {
     }
     max_distance = current_scan_mode.max_distance;
     printf("current scan mode: %s, max_distance: %.1f m, Point number: %.1fK , angle_compensate: %d",  current_scan_mode.scan_mode,
-            current_scan_mode.max_distance, (1000/current_scan_mode.us_per_sample), angle_compensate_multiple);
+           current_scan_mode.max_distance, (1000/current_scan_mode.us_per_sample), angle_compensate_multiple);
 
   }else{
     printf("Can not start scan: %08x!", op_result);
@@ -258,6 +263,7 @@ int main(int argc, const char * argv[]) {
   milliseconds scan_duration;
 
   // fetch result and print it out...
+  int frame_id=0;
   while (1) {
     rplidar_response_measurement_node_hq_t nodes[360*8];
     size_t   count = _countof(nodes);
@@ -273,30 +279,30 @@ int main(int argc, const char * argv[]) {
       float angle_max = DEG2RAD(359.0f);
       if (angle_compensate) {
         //const int angle_compensate_multiple = 1;
-       const int angle_compensate_nodes_count = 360*angle_compensate_multiple;
-       int angle_compensate_offset = 0;
-       rplidar_response_measurement_node_hq_t angle_compensate_nodes[angle_compensate_nodes_count];
-       memset(angle_compensate_nodes, 0, angle_compensate_nodes_count*sizeof(rplidar_response_measurement_node_hq_t));
+        const int angle_compensate_nodes_count = 360*angle_compensate_multiple;
+        int angle_compensate_offset = 0;
+        rplidar_response_measurement_node_hq_t angle_compensate_nodes[angle_compensate_nodes_count];
+        memset(angle_compensate_nodes, 0, angle_compensate_nodes_count*sizeof(rplidar_response_measurement_node_hq_t));
 
-      for(int i=0 ; i < count; i++ ) {
-        if (nodes[i].dist_mm_q2 != 0) {
-          float angle = getAngle(nodes[i]);
-          int angle_value = (int)(angle * angle_compensate_multiple);
-          if ((angle_value - angle_compensate_offset) < 0){
-            angle_compensate_offset = angle_value;
+        for(int i=0 ; i < count; i++ ) {
+          if (nodes[i].dist_mm_q2 != 0) {
+            float angle = getAngle(nodes[i]);
+            int angle_value = (int)(angle * angle_compensate_multiple);
+            if ((angle_value - angle_compensate_offset) < 0){
+              angle_compensate_offset = angle_value;
+            }
+            for (int j = 0; j < angle_compensate_multiple; j++) {
+              angle_compensate_nodes[angle_value-angle_compensate_offset+j] = nodes[i];
+            }
           }
-          for (int j = 0; j < angle_compensate_multiple; j++) {
-            angle_compensate_nodes[angle_value-angle_compensate_offset+j] = nodes[i];
-          }
-          }
-      }
-      publish_scan(&scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
-                              start_scan_time, scan_duration, inverted,
-                              angle_min, angle_max, max_distance,
-                              frame_id);
+        }
+        publish_scan(angle_compensate_nodes, angle_compensate_nodes_count,
+                     start_scan_time, scan_duration, inverted,
+                     angle_min, angle_max, max_distance,
+                     frame_id);
 
 
-    }else{
+      }else{
         int start_node = 0, end_node = 0;
         int i = 0;
         // find the first valid node and last valid node
@@ -309,11 +315,11 @@ int main(int argc, const char * argv[]) {
         angle_min = DEG2RAD(getAngle(nodes[start_node]));
         angle_max = DEG2RAD(getAngle(nodes[end_node]));
 
-        publish_scan(&scan_pub, &nodes[start_node], end_node-start_node +1,
-                 start_scan_time, scan_duration, inverted,
-                 angle_min, angle_max, max_distance,
-                 frame_id);
-    }
+        publish_scan(&nodes[start_node], end_node-start_node +1,
+                     start_scan_time, scan_duration, inverted,
+                     angle_min, angle_max, max_distance,
+                     frame_id);
+      }
 
 
       //
@@ -333,12 +339,18 @@ int main(int argc, const char * argv[]) {
       //          nodes[pos].dist_mm_q2/4.0f,
       //          nodes[pos].quality);
       // }
-    //}
+      //}
+    }
+    else if (op_result == RESULT_OPERATION_FAIL) {
+      // All the data is invalid, just publish them
+      float angle_min = DEG2RAD(0.0f);
+      float angle_max = DEG2RAD(359.0f);
     }
 
     if (ctrl_c_pressed){
       break;
     }
+    frame_id = (frame_id+1) % 1000000;
   }
 
   stop_motor(drv);
