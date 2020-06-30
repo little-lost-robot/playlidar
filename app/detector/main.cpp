@@ -35,6 +35,7 @@
 #include <sstream>
 
 #include "tinyosc.h"
+#include "laserscan.h"
 #include "rplidar.h"
 
 #ifndef _countof
@@ -64,13 +65,58 @@ using namespace std::chrono;
 #define PORT 8888
 //RPlidarDriver * drv = NULL;
 
-
 void publish_scan(rplidar_response_measurement_node_hq_t *nodes,
                   size_t node_count, milliseconds start,
                   milliseconds scan_time, bool inverted,
                   float angle_min, float angle_max,
                   float max_distance,
                   int frame_id){
+
+    LaserScan scan_msg;
+    //scan_msg.header.stamp = start;
+    //scan_msg.header.frame_id = frame_id;
+    //scan_count++;
+
+    bool reversed = (angle_max > angle_min);
+    if ( reversed ) {
+      scan_msg.angle_min =  M_PI - angle_max;
+      scan_msg.angle_max =  M_PI - angle_min;
+    } else {
+      scan_msg.angle_min =  M_PI - angle_min;
+      scan_msg.angle_max =  M_PI - angle_max;
+    }
+    scan_msg.angle_increment = (scan_msg.angle_max - scan_msg.angle_min) / (double)(node_count-1);
+
+    scan_msg.scan_time = scan_time;
+    scan_msg.time_increment = scan_time / (double)(node_count-1);
+    scan_msg.range_min = 0.15;
+    scan_msg.range_max = max_distance;
+
+    scan_msg.intensities.resize(node_count);
+    scan_msg.ranges.resize(node_count);
+    bool reverse_data = (!inverted && reversed) || (inverted && !reversed);
+    if (!reverse_data) {
+        for (size_t i = 0; i < node_count; i++) {
+            float read_value = (float) nodes[i].dist_mm_q2/4.0f/1000;
+            if (read_value == 0.0)
+                scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+            else
+                scan_msg.ranges[i] = read_value;
+            scan_msg.intensities[i] = (float) (nodes[i].quality >> 2);
+        }
+    } else {
+        for (size_t i = 0; i < node_count; i++) {
+            float read_value = (float)nodes[i].dist_mm_q2/4.0f/1000;
+            if (read_value == 0.0)
+                scan_msg.ranges[node_count-1-i] = std::numeric_limits<float>::infinity();
+            else
+                scan_msg.ranges[node_count-1-i] = read_value;
+            scan_msg.intensities[node_count-1-i] = (float) (nodes[i].quality >> 2);
+        }
+    }
+
+
+    //publish scan_msg;
 
 }
 
@@ -200,7 +246,6 @@ int main(int argc, const char * argv[]) {
     printf("\nConnected: %d \n", PORT);
   }
 
-  const char * opt_com_path = NULL;
   u_result     op_result;
 
 #ifdef _WIN32
@@ -211,7 +256,6 @@ int main(int argc, const char * argv[]) {
   serial_port = "/dev/ttyUSB0";
 #endif
 
-  // create the driver instance
   RPlidarDriver *drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_SERIALPORT);
 
   if(!drv) {
@@ -225,12 +269,10 @@ int main(int argc, const char * argv[]) {
     return -1;
   }
 
-  // get rplidar device info
   if(!getRPLIDARDeviceInfo(drv)) {
     return -1;
   }
 
-  // check health...
   if(!checkRPLIDARHealth(drv)) {
     return -1;
   }
@@ -269,6 +311,7 @@ int main(int argc, const char * argv[]) {
     size_t   count = _countof(nodes);
 
     start_scan_time = timeNow();
+    // Rank the scan data from grabScanData() as the angle inscreases  ascendScanData()
     op_result = drv->grabScanDataHq(nodes, count);
     end_scan_time = timeNow();
     scan_duration = (end_scan_time - start_scan_time);
@@ -315,14 +358,13 @@ int main(int argc, const char * argv[]) {
         angle_min = DEG2RAD(getAngle(nodes[start_node]));
         angle_max = DEG2RAD(getAngle(nodes[end_node]));
 
-        publish_scan(&nodes[start_node], end_node-start_node +1,
+        publish_scan(&nodes[start_node], end_node-start_node+1,
                      start_scan_time, scan_duration, inverted,
                      angle_min, angle_max, max_distance,
                      frame_id);
       }
 
 
-      //
       // for (int pos = 0; pos < (int)count ; ++pos) {
       //   // declare a buffer for writing the OSC packet into
       //   char oscbuffer[1024];
